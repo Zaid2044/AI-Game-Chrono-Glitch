@@ -1,5 +1,6 @@
 import pygame
 import sys
+import random
 from collections import deque
 
 SCREEN_WIDTH = 1280
@@ -9,6 +10,63 @@ PLATFORM_COLOR = (0, 255, 0)
 BACKGROUND_COLOR = (20, 20, 40)
 REWIND_TRAIL_COLOR = (255, 0, 0, 100)
 MAX_HISTORY = 300
+NORMAL_GRAVITY = 0.45
+
+class WardenAI:
+    def __init__(self, level, player):
+        self.level = level
+        self.player = player
+        self.glitch_timer = 0
+        self.glitch_interval = random.randint(300, 600)
+        self.active_glitch = None
+        self.glitch_duration = 0
+
+    def update(self):
+        if self.active_glitch:
+            self.run_active_glitch()
+        else:
+            self.glitch_timer += 1
+            if self.glitch_timer >= self.glitch_interval:
+                self.trigger_random_glitch()
+                self.glitch_timer = 0
+                self.glitch_interval = random.randint(300, 600)
+
+    def trigger_random_glitch(self):
+        glitch_type = random.choice(['platform_flicker', 'gravity_shift', 'control_scramble'])
+        
+        if glitch_type == 'platform_flicker':
+            self.active_glitch = 'platform_flicker'
+            self.glitch_duration = 120 # 2 seconds
+            if self.level.platform_list:
+                self.target_platform = random.choice(self.level.platform_list.sprites())
+                self.level.platform_list.remove(self.target_platform)
+
+        elif glitch_type == 'gravity_shift':
+            self.active_glitch = 'gravity_shift'
+            self.glitch_duration = 180 # 3 seconds
+            self.player.gravity_modifier = -1
+
+        elif glitch_type == 'control_scramble':
+            self.active_glitch = 'control_scramble'
+            self.glitch_duration = 240 # 4 seconds
+            self.player.controls_scrambled = True
+
+    def run_active_glitch(self):
+        self.glitch_duration -= 1
+        if self.glitch_duration <= 0:
+            self.end_glitch()
+
+    def end_glitch(self):
+        if self.active_glitch == 'platform_flicker':
+            self.level.platform_list.add(self.target_platform)
+        
+        elif self.active_glitch == 'gravity_shift':
+            self.player.gravity_modifier = 1
+
+        elif self.active_glitch == 'control_scramble':
+            self.player.controls_scrambled = False
+            
+        self.active_glitch = None
 
 class Player(pygame.sprite.Sprite):
     def __init__(self):
@@ -24,6 +82,8 @@ class Player(pygame.sprite.Sprite):
         self.level = None
         self.is_rewinding = False
         self.history = deque(maxlen=MAX_HISTORY)
+        self.gravity_modifier = 1
+        self.controls_scrambled = False
 
     def update(self):
         if self.is_rewinding:
@@ -64,28 +124,27 @@ class Player(pygame.sprite.Sprite):
 
     def calc_grav(self):
         if self.change_y == 0:
-            self.change_y = 1
+            self.change_y = 1 * self.gravity_modifier
         else:
-            self.change_y += 0.45
+            self.change_y += NORMAL_GRAVITY * self.gravity_modifier
 
     def jump(self):
-        if self.is_rewinding:
-            return
+        if self.is_rewinding: return
         
         self.rect.y += 2
         platform_hit_list = pygame.sprite.spritecollide(self, self.level.platform_list, False)
         self.rect.y -= 2
         
-        if len(platform_hit_list) > 0:
+        if len(platform_hit_list) > 0 and self.gravity_modifier > 0:
             self.change_y = -12
-
+    
     def go_left(self):
         if not self.is_rewinding:
-            self.change_x = -6
+            self.change_x = 6 if self.controls_scrambled else -6
 
     def go_right(self):
         if not self.is_rewinding:
-            self.change_x = 6
+            self.change_x = -6 if self.controls_scrambled else 6
 
     def stop(self):
         self.change_x = 0
@@ -151,6 +210,8 @@ def main():
     
     player.level = current_level
     
+    warden = WardenAI(current_level, player)
+
     active_sprite_list = pygame.sprite.Group()
     active_sprite_list.add(player)
     
@@ -173,13 +234,18 @@ def main():
                     player.is_rewinding = True
             
             if event.type == pygame.KEYUP:
-                if (event.key == pygame.K_LEFT or event.key == pygame.K_a) and player.change_x < 0:
-                    player.stop()
-                if (event.key == pygame.K_RIGHT or event.key == pygame.K_d) and player.change_x > 0:
-                    player.stop()
+                if (event.key == pygame.K_LEFT or event.key == pygame.K_a):
+                    if not (player.controls_scrambled and player.change_x > 0) and player.change_x < 0:
+                        player.stop()
+                if (event.key == pygame.K_RIGHT or event.key == pygame.K_d):
+                     if not (player.controls_scrambled and player.change_x < 0) and player.change_x > 0:
+                        player.stop()
                 if event.key == pygame.K_r:
                     player.is_rewinding = False
         
+        if not player.is_rewinding:
+            warden.update()
+
         active_sprite_list.update()
         current_level.update()
         
