@@ -1,11 +1,14 @@
 import pygame
 import sys
+from collections import deque
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
-PLAYER_COLOR = (255, 0, 0) 
-PLATFORM_COLOR = (0, 255, 0) 
-BACKGROUND_COLOR = (20, 20, 40) 
+PLAYER_COLOR = (255, 0, 0)
+PLATFORM_COLOR = (0, 255, 0)
+BACKGROUND_COLOR = (20, 20, 40)
+REWIND_TRAIL_COLOR = (255, 0, 0, 100)
+MAX_HISTORY = 300
 
 class Player(pygame.sprite.Sprite):
     def __init__(self):
@@ -19,28 +22,45 @@ class Player(pygame.sprite.Sprite):
         self.change_x = 0
         self.change_y = 0
         self.level = None
+        self.is_rewinding = False
+        self.history = deque(maxlen=MAX_HISTORY)
 
     def update(self):
-        self.calc_grav()
+        if self.is_rewinding:
+            self.rewind()
+        else:
+            self.calc_grav()
+            self.rect.x += self.change_x
+            
+            block_hit_list = pygame.sprite.spritecollide(self, self.level.platform_list, False)
+            for block in block_hit_list:
+                if self.change_x > 0:
+                    self.rect.right = block.rect.left
+                elif self.change_x < 0:
+                    self.rect.left = block.rect.right
 
-        self.rect.x += self.change_x
-        
-        block_hit_list = pygame.sprite.spritecollide(self, self.level.platform_list, False)
-        for block in block_hit_list:
-            if self.change_x > 0:
-                self.rect.right = block.rect.left
-            elif self.change_x < 0:
-                self.rect.left = block.rect.right
+            self.rect.y += self.change_y
 
-        self.rect.y += self.change_y
+            block_hit_list = pygame.sprite.spritecollide(self, self.level.platform_list, False)
+            for block in block_hit_list:
+                if self.change_y > 0:
+                    self.rect.bottom = block.rect.top
+                elif self.change_y < 0:
+                    self.rect.top = block.rect.bottom
+                self.change_y = 0
+            
+            self.record_history()
 
-        block_hit_list = pygame.sprite.spritecollide(self, self.level.platform_list, False)
-        for block in block_hit_list:
-            if self.change_y > 0:
-                self.rect.bottom = block.rect.top
-            elif self.change_y < 0:
-                self.rect.top = block.rect.bottom
-            self.change_y = 0
+    def record_history(self):
+        if not self.is_rewinding:
+            self.history.append((self.rect.x, self.rect.y))
+
+    def rewind(self):
+        if len(self.history) > 0:
+            last_pos = self.history.pop()
+            self.rect.x, self.rect.y = last_pos
+        else:
+            self.is_rewinding = False
 
     def calc_grav(self):
         if self.change_y == 0:
@@ -49,6 +69,9 @@ class Player(pygame.sprite.Sprite):
             self.change_y += 0.45
 
     def jump(self):
+        if self.is_rewinding:
+            return
+        
         self.rect.y += 2
         platform_hit_list = pygame.sprite.spritecollide(self, self.level.platform_list, False)
         self.rect.y -= 2
@@ -57,10 +80,12 @@ class Player(pygame.sprite.Sprite):
             self.change_y = -12
 
     def go_left(self):
-        self.change_x = -6
+        if not self.is_rewinding:
+            self.change_x = -6
 
     def go_right(self):
-        self.change_x = 6
+        if not self.is_rewinding:
+            self.change_x = 6
 
     def stop(self):
         self.change_x = 0
@@ -82,6 +107,14 @@ class Level:
 
     def draw(self, screen):
         screen.fill(BACKGROUND_COLOR)
+        
+        if self.player.is_rewinding and len(self.player.history) > 0:
+            for i, pos in enumerate(list(self.player.history)[-50:]):
+                alpha = int(255 * (i / 50))
+                trail_surf = pygame.Surface((40, 50), pygame.SRCALPHA)
+                trail_surf.fill((255, 100, 100, alpha))
+                screen.blit(trail_surf, pos)
+
         self.platform_list.draw(screen)
 
 class Level_01(Level):
@@ -100,7 +133,6 @@ class Level_01(Level):
             block.rect.y = platform_data[3]
             block.player = self.player
             self.platform_list.add(block)
-
 
 def main():
     pygame.init()
@@ -137,12 +169,16 @@ def main():
                     player.go_right()
                 if event.key == pygame.K_UP or event.key == pygame.K_w or event.key == pygame.K_SPACE:
                     player.jump()
+                if event.key == pygame.K_r:
+                    player.is_rewinding = True
             
             if event.type == pygame.KEYUP:
                 if (event.key == pygame.K_LEFT or event.key == pygame.K_a) and player.change_x < 0:
                     player.stop()
                 if (event.key == pygame.K_RIGHT or event.key == pygame.K_d) and player.change_x > 0:
                     player.stop()
+                if event.key == pygame.K_r:
+                    player.is_rewinding = False
         
         active_sprite_list.update()
         current_level.update()
